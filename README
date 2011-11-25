@@ -78,6 +78,11 @@ Keep in mind that most of the time a simplier solution like
 	KERNEL=="sd[b-z][0-9]", RUN+="/sbin/udevh-sd %k"
 will do (note [b-z] pattern).
 
+Warning: the script will NOT even try to handle LABEL= or UUID= in
+fstab, and will gladly add mountpoints for such devices using their
+real (kernel) names if given opportunity.
+Use udev rules to prevent this.
+
 
 Non-partitioned drives
 ~~~~~~~~~~~~~~~~~~~~~~
