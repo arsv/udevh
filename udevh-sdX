@@ -1,0 +1,251 @@
+#!/usr/bin/perl
+
+# udev(7) handler for (removable) disk devices
+# Sample usage:
+# 	KERNEL=="sd[b-z]", RUN+="/sbin/udevh-sdX %k"
+# Test run:
+#	/sbin/udevh-sdX sdb add
+#	/sbin/udevh-sdX sdb remove
+# Note that this script expects udev environment,
+# namely $ACTION and possibly $ID_*, so beware stray
+# values when running manually.
+#
+# Make sure your /etc/fstab contains
+#	# UDEV
+# This script will only add or delete lines below it.
+
+use Fcntl qw(:flock);
+
+$FSTAB = "/etc/fstab";
+$MNT = "/mnt";
+$MEDIA = "/media";
+
+$comop = "defaults,user,noatime,nosuid,nodev";
+%FS_op = (
+	'ext2' => $comop,
+	'ext3' => $comop,
+	'ext4' => $comop,
+	'reiserfs' => $comop,
+	'vfat' => "$comop,utf8,gid=100,dmask=0002,fmask=0113"
+);
+
+$device = shift;		# or $ENV{KERNEL}, but that doesn't work
+$action = shift || $ENV{ACTION};# ...because there's no %a in udev rules
+exit if $device =~ /\d+$/;	# skip accidental /dev/sda1 runs
+
+if($action eq 'add') {
+	@parts = list_partitions($device);
+	%fstab = list_fstab_entries($device);
+	@fsadd = ();
+	if(!@parts) {
+		unless(defined($fstab{$device})) {
+			$mline = check_part($device, 0);
+			push(@fsadd, $mline) if defined $mline;
+		}
+	} elsif(@parts == 1) {
+		$part = shift @parts;
+		unless(defined($fstab{$part})) {
+			$mline = check_part($part, 1);
+			push(@fsadd, $mline) if defined $mline;
+		}
+	} else {
+		foreach(@parts) {
+			next if defined $fstab{$_};
+			$mline = check_part($_, scalar(@parts), $device);
+			push(@fsadd, $mline) if defined $mline;
+		}
+	}
+	append_to_fstab(@fsadd);
+} elsif($action eq 'remove') {
+	@dirs = remove_from_fstab($device);
+	remove_mountpoints(@dirs);
+};
+
+
+sub list_partitions
+{
+	my $device = shift;
+	my @parts;
+	my $sys = "/sys/block/$device";
+	my $dent;
+
+	opendir(SYS, $sys) || return;
+	while($dent = readdir(SYS)) {
+		next unless -d "$sys/$dent";
+		next unless -f "$sys/$dent/partition";
+		push(@parts, $dent);
+	};
+
+	return @parts;
+}
+
+sub check_part
+{
+	my $device = shift;
+	my $nparts = shift;
+	my $base = shift;
+
+	my $info = blkid($device) || return;
+	my $type = $info->{TYPE};
+	return unless defined $type;
+	my $opts = $FS_op{$type};
+	return unless defined $opts;
+
+	# note: if we're here, then there's no fstab entry for /dev/$device
+	# and thus it's ok to mess with /mnt/$device
+	return if ! -d "$MNT/$device" && !mkdir("$MNT/$device");
+	$info->{tag} = make_device_tag($device, $info, $nparts, $base) unless defined $info->{tag};
+	make_media_link($device, $info, $nparts, $base);
+
+	return join("\t", ("/dev/$device", "$MNT/$device", $type, $opts, 0, 0));
+}
+
+sub make_device_tag
+{
+	my $device = shift;
+	my $info = shift;
+	my $nparts = shift;
+	my $base = shift;
+
+	my @media;
+	if(opendir(MEDIA, $MEDIA)) {
+		my $dent;
+		while($dent = readdir(MEDIA)) {
+			next if m!^.!;	
+			next unless -l "$MEDIA/$_";
+			push(@media, $_);
+		}
+		closedir(MEDIA);
+	}
+
+	my $tag;
+	my $label = $info->{LABEL};
+	my $vendor = $ENV{ID_VENDOR};
+	my $serial = $ENV{ID_SERIAL_SHORT};
+	($tag = check_tag(\@media, $label)) && return $tag unless $nparts > 1;
+	($tag = check_tag(\@media, $vendor)) && return $tag;
+	($tag = check_tag(\@media, $vendor, $serial)) && return $tag;
+
+	return;
+}
+
+sub check_tag
+{
+	my $media = shift;
+	foreach(@_) {
+		return unless defined $_;
+	}
+	my $tag = join('-', @_);
+	$tag =~ s/[^A-Za-z0-9-]//;
+	foreach(@$media) {
+		return if m{^$tag-};
+	}
+	return $tag;
+}
+
+sub make_media_link
+{
+	my $device = shift;
+	my $info = shift;
+	my $nparts = shift;
+	my $base = shift;
+
+	my $tag = $info->{tag};
+	$tag .= "-$1" if $nparts > 1 && $device =~ /^$base(.+)/;
+	symlink("$MNT/$device", "$MEDIA/$tag");
+}
+
+sub blkid
+{
+	my $dev = shift;
+	my %info = ();
+
+	open(BLKID, "/sbin/blkid -o export /dev/$dev |") || return;
+	while(<BLKID>) {
+		next unless /^(\S+)=(.*)/;
+		$info{$1} = $2;
+	};
+	close(BLKID);
+
+	return \%info;
+}
+
+sub list_fstab_entries
+{
+	my $device = shift;
+	my %fstab = ();
+
+	open(FSTAB, '<', $FSTAB) || die;
+	while(<FSTAB>) {
+		next unless m{^/dev/($device\S*)}o;
+		$fstab{$1} = 1;
+	}
+	close(FSTAB);
+
+	return %fstab;
+}
+
+sub append_to_fstab
+{
+	my @fstab;
+	my $udevs = undef;
+
+	return unless @_;
+
+	open(FSTAB, '+<', $FSTAB) or die;
+	flock(FSTAB, LOCK_EX) or die;
+	while(<FSTAB>) {
+		$udevc = 1 if m!^# UDEV!;
+		chomp;
+		push(@fstab, $_);
+	} if($udevc) {
+		foreach(@_) {
+			print FSTAB "$_\n";
+		}
+	}
+	flock(FSTAB, LOCK_UN);
+	close(FSTAB);
+}
+
+sub remove_from_fstab
+{
+	my $device = shift;
+	my @dirs = ();
+
+	open(FSTAB, '+<', $FSTAB) or die;
+	flock(FSTAB, LOCK_EX) or die;
+	while(<FSTAB>) {
+		$udevc = 1 if m!^# UDEV!;
+		if($udevc && m!^(/dev/$device\d*)\s(\S+)! && -d $2) {
+			push(@dirs, $2);
+			next;
+		}
+		chomp;
+		push(@fstab, $_);
+	} if($udevc) {
+		if(seek(FSTAB, 0, 0) && truncate(FSTAB, 0)) {
+			foreach(@fstab) {
+				print FSTAB "$_\n";
+			}
+		}
+	}
+	flock(FSTAB, LOCK_UN);
+	close(FSTAB);
+
+	return @dirs;
+}
+
+sub remove_mountpoints
+{
+	rmdir($_) foreach(@_);
+
+	# anything under /media that is a dead link should be
+	# removed, so no checks against fstab here
+	opendir(MEDIA, $MEDIA);
+	while($_ = readdir(MEDIA)) {
+		$_ = "$MEDIA/$_";
+		next unless -l and not -e;
+		unlink;
+	}
+	close(MEDIA);
+}
