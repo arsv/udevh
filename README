@@ -1,2 +1,125 @@
-udev(7) helper script to make mountpoints for removable devices.
-See the script itself for more info.
+Description
+~~~~~~~~~~~
+udevh-sdX is an udev(7) helper script that makes mountpoints for
+(removable) devices. When a new device is added, it tries to make mountpoints
+under /mnt and add relevant lines to /etc/fstab. When possible, it will also
+try to make symlinks under /media pointing to the /mnt mountpoints,
+with (hopefully) short descriptive names for the partitions.
+
+
+Motivation
+~~~~~~~~~~
+Automounting is bad. Keeping static mountpoints for removable devices
+is cumbersome. Creating and removing mountpoints automatically while allowing
+users to explicitly mount the devices is how is I see the Right Way
+to handle removable devices.
+
+A rant on automounting. Automounting is almost as bad as autorun; automounting
+means the system tries to perform a rather complex action without an explicit
+command to do so. Automount can be dangerous when the device in question
+contains damaged filesystem, as it leaves no way for the user to run fsck
+before attempting to mount it.
+Automounting wreaks havoc upon user permissions system and requires ugly
+workarounds like pmount(1) to work.
+Automounting also breaks mount/umount symmetry, because there's no
+auto-un-mount, at least for devices that can be pulled out at any time
+(which is almost all removable devices, except maybe for optical drives with
+door-lock feature).
+Automounting shouldn't be used on any devices, except maybe for very specific
+cases of NON-removable on-again off-again devices tied closely to the system.
+End-of-rant.
+
+
+Requirements
+~~~~~~~~~~~~
+/usr/bin/perl with Fcntl module, /sbin/blkid, and usable /sys filesystem.
+
+
+Usage
+~~~~~
+Place the script to /sbin, and create /etc/udev/rules.d/11-mountpoints.rules
+containing
+	KERNEL=="sd[a-z]", ATTR{removable}=="1", RUN+="/sbin/udevh-sdX %k"
+then append
+	# UDEV
+line to /etc/fstab to mark the place where automatically generated lines
+will go.
+
+To test it without creating udev rules, run
+	/sbin/udevh-sdX (device) add
+	/sbin/udevh-sdX (device) remove
+with "(device)" being something like "sda" or "sdb".
+
+
+Static rules in fstab
+~~~~~~~~~~~~~~~~~~~~~
+udevh-sdX will only modify fstab below
+	# UDEV (anything-here)
+line. Anything above that line is treated as static rules.
+udevh-sdX also won't try to add lines for partitions which are already
+listed in fstab.
+Which means udevh-sdX won't try to probe or add fstab lines for
+non-removable system partitions as long as they are already in fstab.
+
+Note that the script will only look for *partitions* it tries to add.
+If there are lines for sda1 and sda2, but not sda3, it will probe
+and try to add sda3. It may be a problem is sda is the primary system
+disk and sda3 is something that should not appear in fstab, esp. with
+"user" option.
+
+If a device must be "blacklisted" for udevh-sdX without listing it in
+fstab, use udev rules to do so.
+Example:
+	KERNEL=="sd[a-b][0-9]", GOTO="mountpoints-end"
+	KERNEL=="sd[a-z][0-9]", RUN+="/sbin/udevh-sdX %k"
+	LABEL="mountpoints-end"
+The same idea can be used to blacklist devices by name, serial etc.
+Keep in mind that most of the time a simplier solution like
+	KERNEL=="sd[b-z][0-9]", RUN+="/sbin/udevh-sdX %k"
+will do (note [b-z] pattern).
+
+
+Non-partitioned drives
+~~~~~~~~~~~~~~~~~~~~~~
+In case the drive has no partitions, udevh-sdX checks for filesystem
+on the whole drive, and if it's found, creates relevant mountpoint.
+
+
+Media links
+~~~~~~~~~~~
+The script will try to make short readable symlinks in /media pointing
+to resp. mountpoints in /mnt. Several options are tried, the first one
+which is well-defined defined and which is not yet used for another
+device is chosen.
+	* if there's a single partition on the drive, and there's
+	  filesystem label on that partition, this label is tried
+	* then ID_VENDOR, as reported by udev, is tried
+	* finally, ID_VENDOR-ID_SERIAL_SHORT is tried
+Non-partitioned drives are treated as if they had a single partition.
+
+On all my devices ID_VENDOR is a simple readable string ("JetFlash"),
+which is also typically visible on the device itself. Despite its name,
+it's not actually device vendor; e.g., for JetFlash that would be Transcend.
+There's also ID_MODEL, but that typically contains non-descriptive codes
+("TS2GJFV60"), hardly useful to make nice symlinks. Instead, I decided to
+use ID_SERIAL_SHORT, which is typically short, and which (hopefully) can
+be used to distinguish different devices with the same ID_VENDOR.
+
+For multi-partition drives, partition number is appended to each link,
+so they become e.g. /media/JetFlash-1, /media/JetFlash-5 etc.
+
+
+A note on design
+~~~~~~~~~~~~~~~~
+udevh-sdX is expected to handle whole devices, like /dev/sda, not partitions
+like /dev/sda1. This is in contrast with most udev examples I saw, which handle
+individual partitions (i.e. which are called from udev rules for sd[a-z][0-9]).
+The primary reasons for this are:
+	1. correct handling of unpartitioned drives and multi-partition drives
+	2. avoiding multiple /etc/fstab updates
+	3. having the same prefix for all partitions of a single drive in /media
+Only #2 requires this approach; both #1 and #3 can be done on per-partition
+basis, it's just more convenient with the whole drive.
+The problem with #1 and #3 is that udev doesn't supply total number
+of partitions on the drive for the script, but that can be easily circumvented
+by analyzing /sys hierarchy.
