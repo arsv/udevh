@@ -2,10 +2,10 @@
 
 # udev(7) handler for (removable) disk devices
 # Sample usage:
-# 	KERNEL=="sd[b-z]", RUN+="/sbin/udevh-sdX %k"
+# 	KERNEL=="sd[b-z]", RUN+="/sbin/udevh-sd %k"
 # Test run:
-#	/sbin/udevh-sdX sdb add
-#	/sbin/udevh-sdX sdb remove
+#	/sbin/udevh-sd sdb add
+#	/sbin/udevh-sd sdb remove
 # Note that this script expects udev environment,
 # namely $ACTION and possibly $ID_*, so beware stray
 # values when running manually.

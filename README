@@ -1,6 +1,6 @@
 Description
 ~~~~~~~~~~~
-udevh-sdX is an udev(7) helper script that makes mountpoints for
+udevh-sd is an udev(7) helper script that makes mountpoints for
 (removable) devices. When a new device is added, it tries to make mountpoints
 under /mnt and add relevant lines to /etc/fstab. When possible, it will also
 try to make symlinks under /media pointing to the /mnt mountpoints,
@@ -39,26 +39,26 @@ Usage
 ~~~~~
 Place the script to /sbin, and create /etc/udev/rules.d/11-mountpoints.rules
 containing
-	KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sdX %k"
+	KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sd %k"
 then append
 	# UDEV
 line to /etc/fstab to mark the place where automatically generated lines
 will go.
 
 To test it without creating udev rules, run
-	/sbin/udevh-sdX (device) add
-	/sbin/udevh-sdX (device) remove
+	/sbin/udevh-sd (device) add
+	/sbin/udevh-sd (device) remove
 with "(device)" being something like "sda" or "sdb".
 
 
 Static rules in fstab
 ~~~~~~~~~~~~~~~~~~~~~
-udevh-sdX will only modify fstab below
+udevh-sd will only modify fstab below
 	# UDEV (anything-here)
 line. Anything above that line is treated as static rules.
-udevh-sdX also won't try to add lines for partitions which are already
+udevh-sd also won't try to add lines for partitions which are already
 listed in fstab.
-Which means udevh-sdX won't try to probe or add fstab lines for
+Which means udevh-sd won't try to probe or add fstab lines for
 non-removable system partitions as long as they are already in fstab.
 
 Note that the script will only look for *partitions* it tries to add.
@@ -67,21 +67,21 @@ and try to add sda3. It may be a problem is sda is the primary system
 disk and sda3 is something that should not appear in fstab, esp. with
 "user" option.
 
-If a device must be "blacklisted" for udevh-sdX without listing it in
+If a device must be "blacklisted" for udevh-sd without listing it in
 fstab, use udev rules to do so.
 Example:
 	KERNEL=="sd[a-b][0-9]", GOTO="mountpoints-end"
-	KERNEL=="sd[a-z][0-9]", RUN+="/sbin/udevh-sdX %k"
+	KERNEL=="sd[a-z][0-9]", RUN+="/sbin/udevh-sd %k"
 	LABEL="mountpoints-end"
 The same idea can be used to blacklist devices by name, serial etc.
 Keep in mind that most of the time a simplier solution like
-	KERNEL=="sd[b-z][0-9]", RUN+="/sbin/udevh-sdX %k"
+	KERNEL=="sd[b-z][0-9]", RUN+="/sbin/udevh-sd %k"
 will do (note [b-z] pattern).
 
 
 Non-partitioned drives
 ~~~~~~~~~~~~~~~~~~~~~~
-In case the drive has no partitions, udevh-sdX checks for filesystem
+In case the drive has no partitions, udevh-sd checks for filesystem
 on the whole drive, and if it's found, creates relevant mountpoint.
 
 
@@ -111,7 +111,7 @@ so they become e.g. /media/JetFlash-1, /media/JetFlash-5 etc.
 
 A note on design
 ~~~~~~~~~~~~~~~~
-udevh-sdX is expected to handle whole devices, like /dev/sda, not partitions
+udevh-sd is expected to handle whole devices, like /dev/sda, not partitions
 like /dev/sda1. This is in contrast with most udev examples I saw, which handle
 individual partitions (i.e. which are called from udev rules for sd[a-z][0-9]).
 The primary reasons for this are:
