@@ -69,7 +69,7 @@ sub list_partitions
 	my $sys = "/sys/block/$device";
 	my $dent;
 
-	opendir(SYS, $sys) || return;
+	opendir(SYS, $sys) or return;
 	while($dent = readdir(SYS)) {
 		next unless -d "$sys/$dent";
 		next unless -f "$sys/$dent/partition";
@@ -85,7 +85,7 @@ sub check_part
 	my $nparts = shift;
 	my $base = shift;
 
-	my $info = blkid($device) || return;
+	my $info = blkid($device) or return;
 	my $type = $info->{TYPE};
 	return unless defined $type;
 	my $opts = $FS_op{$type};
@@ -160,7 +160,7 @@ sub blkid
 	my $dev = shift;
 	my %info = ();
 
-	open(BLKID, "/sbin/blkid -o export /dev/$dev |") || return;
+	open(BLKID, "/sbin/blkid -o export /dev/$dev |") or return;
 	while(<BLKID>) {
 		next unless /^(\S+)=(.*)/;
 		$info{$1} = $2;
@@ -175,7 +175,7 @@ sub list_fstab_entries
 	my $device = shift;
 	my %fstab = ();
 
-	open(FSTAB, '<', $FSTAB) || die;
+	open(FSTAB, '<', $FSTAB) or die;
 	while(<FSTAB>) {
 		next unless m{^/dev/($device\S*)}o;
 		$fstab{$1} = 1;
