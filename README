@@ -39,7 +39,7 @@ Usage
 ~~~~~
 Place the script to /sbin, and create /etc/udev/rules.d/11-mountpoints.rules
 containing
-	KERNEL=="sd[a-z]", ATTR{removable}=="1", RUN+="/sbin/udevh-sdX %k"
+	KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sdX %k"
 then append
 	# UDEV
 line to /etc/fstab to mark the place where automatically generated lines
