@@ -20,7 +20,7 @@ $FSTAB = "/etc/fstab";
 $MNT = "/mnt";
 $MEDIA = "/media";
 
-$comop = "defaults,user,noauto,noatime,nosuid,nodev";
+$comop = "defaults,users,noauto,noatime,nosuid,nodev";
 %FS_op = (
 	'ext2' => $comop,
 	'ext3' => $comop,
