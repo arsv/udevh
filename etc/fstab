@@ -1,0 +1,4 @@
+/dev/sda1	/		ext4	defaults,noatime	0	1
+none		/tmp		tmpfs	defaults,noatime	0	0
+
+# UDEV

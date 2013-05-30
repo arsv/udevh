@@ -1,0 +1,2 @@
+KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sd %k"
+KERNEL=="sr[0-9]", RUN+="/sbin/udevh-sd %k"

@@ -61,12 +61,6 @@ listed in fstab.
 Which means udevh-sd won't try to probe or add fstab lines for
 non-removable system partitions as long as they are already in fstab.
 
-Note that the script will only look for *partitions* it tries to add.
-If there are lines for sda1 and sda2, but not sda3, it will probe
-and try to add sda3. It may be a problem is sda is the primary system
-disk and sda3 is something that should not appear in fstab, esp. with
-"user" option.
-
 If a device must be "blacklisted" for udevh-sd without listing it in
 fstab, use udev rules to do so.
 Example:
@@ -92,6 +86,9 @@ on the whole drive, and if it's found, creates relevant mountpoint.
 
 Media links
 ~~~~~~~~~~~
+(Note: /media seems to be deprecated. Check $MEDIA in the script,
+and set it to whatever you wish it to be.) 
+
 The script will try to make short readable symlinks in /media pointing
 to resp. mountpoints in /mnt. Several options are tried, the first one
 which is well-defined defined and which is not yet used for another

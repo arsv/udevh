@@ -1,0 +1,309 @@
+#!/usr/bin/perl
+
+# udev(7) handler for (removable) disk devices
+# Sample usage:
+# 	KERNEL=="sd[b-z]", RUN+="/sbin/udevh-sd %k"
+# Test run:
+#	/sbin/udevh-sd sdb add
+#	/sbin/udevh-sd sdb remove
+# Note that this script expects udev environment,
+# namely $ACTION and possibly $ID_*, so beware stray
+# values when running manually.
+#
+# Make sure your /etc/fstab contains
+#	# UDEV
+# This script will only add or delete lines below that line.
+
+use Fcntl qw(:flock FD_CLOEXEC);
+
+$FSTAB = "/etc/fstab";
+$MNT = "/mnt";
+$SYS = "/sys";
+$MEDIA = "/mnt";	# "/media", "/run/media", "/mnt/label", or something like that.
+			# With some care, "/mnt" is also possible.
+			# Set to undef if you're not planning to use it.
+$FSTAB = "./etc/fstab";	# TEST
+$MNT = "./mnt";		# TEST
+$SYS = "./sys";		# TEST
+$MEDIA = "./mnt";	# TEST
+
+$common = "users,noauto,noatime,nosuid,nodev";
+# only file systems listed here will be recognized as mountable
+%fsopts = (
+	'ext2'      => $common,
+	'ext3'      => $common,
+	'ext4'      => $common,
+	'reiserfs'  => $common,
+	'iso9660'   => "$common,ro,utf8",
+	'vfat'      => "$common,utf8,gid=100,dmask=0002,fmask=0113",
+	'ntfs'      => "$common,utf8",
+	'squashfs'  => $common,
+	'udf'       => $common,
+	'xfs'       => $common
+);
+
+$device = shift;			# or $ENV{KERNEL}, but that doesn't work
+$action = shift || $ENV{ACTION};	# ...because there's no %a in udev rules
+exit if in_fstab($device);		# skip static devices
+
+# Assuming $device = 'sda', '1' here stands for 'sda1'; see part_of()
+@fstab = ( );	# current fstab contents, excluding managed lines for $device
+%fsold = ( );	# old fstab lines ('1' => "/dev/sda1 /mnt/sda1 fs options 0 0")
+%fsnew = ( );	# mountpoints to be added ('1' => { TYPE => "ext2", ... })
+
+
+# List partitions, we'll need them to filter fstab lines for $device
+
+@parts = ($action ne 'remove') ? list_partitions($device) : ( );
+
+# Open current fstab and check what's there for $device
+
+open(FSTAB, '+<', $FSTAB) or die;
+# no need to pass fstab handler to blkid and whatever else it may call
+fcntl(FSTAB, F_SETFD, FD_CLOEXEC);
+flock(FSTAB, LOCK_EX) or die "flock: $!\n";
+
+while(<FSTAB>) {
+	chomp;
+	if(!$udevc) {
+		$udevc = 1 if m!^# UDEV!;
+		push(@fstab, $_);
+	} else {
+		next unless /\S/;
+		next unless m!^#?/dev/(\S+)!;
+		if(defined($part = part_of($1, $device))) {
+			# Do not reuse whole-drive entries since they are likely
+			# to be wrong (esp. with "change" action)
+			$fsold{$part} = $_ if length($part) && in($part, @parts);
+		} else {
+			push(@fstab, $_);
+		}
+	}
+}
+
+# Add fstab lines for $device
+
+foreach $part (@parts) {
+	if(defined($fsold{$part})) {
+		# Reuse existing mountpoints whenever possible.
+		# This is ok, because udev only reports partition structure
+		# changes. Something like fs change is out of scope, no need
+		# to worry about that.
+		push(@fstab, $fsold{$part});
+	} else {
+		$dev = $device.$part;	# sda1
+		$info = check_dev($dev, scalar(@parts));
+		if(defined($info->{TYPE})) {
+			# Something mountable
+			push(@fstab, sprintf("%s	%s	%s	%s	0 0",
+				"/dev/$dev", "$MNT/$dev", $info->{TYPE}, $info->{opts}));
+			$fsnew{$part} = $info;
+		} elsif(length($part)) {
+			# Non-mountable partition
+			push(@fstab, "# /dev/$dev type unknown");
+		}
+		next unless defined $info->{TYPE};
+	}
+}
+
+# Write fstab and remove locks
+
+truncate FSTAB, 0;
+seek(FSTAB, 0, 0) || die "Can't seek $FSTAB: $!\n";
+print FSTAB join "", map { "$_\n" } @fstab;
+flock(FSTAB, LOCK_UN);
+close(FSTAB);
+
+# Set up mountpoints
+
+if(opendir(MNT, $MNT)) {
+	while(defined($de = readdir(MNT))) {
+		$dir = "$MNT/$de";
+		next if $de =~ m!^\.!;
+		next unless defined($part = part_of($de, $device));
+		next if $fsold{$part} || $fsnew{$part};
+		if(-l $dir) {
+			warn "unlink $dir\n";	# TEST
+			unlink($dir);
+		} else {
+			warn "rmdir $dir\n";	# TEST
+			rmdir($dir);
+		}
+	}
+	closedir(MNT);
+	foreach(@parts) {
+		next unless $fsold{$p_} || $fsnew{$_};
+		mkdir "$MNT/$device$_";		# EEXISTS is ok here
+		warn "mkdir $MNT/$device$_\n"	# TEST
+	}
+}
+
+# Set up /media links
+
+if(defined($MEDIA) && opendir(MEDIA, $MEDIA)) {
+	%other = ();	# non-$device media links ("somefslabel" => 1)
+	while(defined($de = readdir(MEDIA))) {
+		next if m!^\.!;
+		$sym = "$MEDIA/$de";
+		$tgt = readlink($sym);
+		# handle non-symlinks, in case we're in /mnt
+		unless(defined($tgt)) {
+			$other{$de} = 1;
+			$de =~ s/\d+$//;
+			$other{$de} = 1;
+			next;
+		}
+		# we are not checking whether it points to somewhere in $MNT here,
+		# just whether it could have been created by this script
+		if($MEDIA ne $MNT) {
+			next unless substr($tgt, 0, length($MNT)+1) eq "$MNT/";
+			$dev = substr($tgt, length($MNT)+1);
+		} else {
+			next if $tgt =~ m!/!;
+			$dev = $tgt;
+		}
+		if(!defined($part = part_of($dev, $device))) {
+			# This is NOT $device
+			# Try to guess the base label, and avoid using it for $device
+			$other{$de} = 1;
+			$de =~ s{-[^-]+$}{};
+			$other{$de} = 1;
+		} else {
+			# This is $device link
+			# Any part not in $fsold is a "changed" part, so it's ok
+			# to re-create resp. links
+			unlink($sym) unless $fsold{$part};
+			warn "unlink $sym\n" unless $fsold{$part};	# TEST
+		}
+	}
+	$devtag = undef;
+	$labels = [];
+	try_label($labels, $ENV{ID_VENDOR});
+	try_label($labels, $ENV{ID_VENDOR}, $ENV{ID_SERIAL_SHORT});
+	try_label($labels, $ENV{ID_MODEL});
+	foreach(@$labels) {
+		next if $other{$_};
+		next if m!^\.!;
+		$devtag = $_; last;
+	}
+	foreach $part (keys %fsnew) {
+		$info = $fsnew{$part};
+		$label = $info->{LABEL};
+		$label =~ s{[/\\]}{}g;
+		$label =~ s{\.\.}{}g;
+		$link = undef;
+		if(length($label) && !$other{$label}) {
+			$link = $label;
+		} elsif(length($devtag)) {
+			$link = $devtag;
+			$link .= "-$part" unless @parts <= 1;
+		} next unless defined $link;
+		$tgt = ($MEDIA eq $MNT) ? "$device$part" : "$MNT/$device$part";
+		symlink($tgt, "$MEDIA/$link");
+		warn "symlink $tgt $MEDIA/$link\n";	# TEST
+	}
+}
+
+sub in_fstab
+{
+	my $device = shift;
+	open(FSTAB, '<', $FSTAB);
+	while(<FSTAB>) {
+		return 0 if m!#\s*UDEV!;
+		next if m!^\s*#!;
+		next unless m!^#?/dev/(\S+)!;
+		return 1 if is_part_of($1, $device);
+	}
+	close(FSTAB);
+	return 1;
+}
+
+sub is_part_of
+{
+	return defined part_of(@_);
+}
+
+# ("sda1", "sda") -> "1"
+# ("sda",  "sda") -> ""
+# ("sdb",  "sda") -> undef
+sub part_of
+{
+	my $suspect = shift;	# something like sda3
+	my $device = shift;	# something like sda
+
+	return "" if $device =~ m!\d$! && $suspect eq $device;		# /dev/sr0
+	return unless substr($suspect, 0, length($device)) eq $device;
+	return "" if length($suspect) == length($device);
+	my $suff = substr($suspect, length($device));
+	return unless $suff =~ m!^\d!;
+	return $suff;
+}
+
+sub list_partitions
+{
+	my $device = shift;
+	my @parts;
+	my $sys = "$SYS/block/$device";
+	my $dent;
+	my $part;
+
+	return ("") if $device =~ m!\d$!;		# sr0 and similar
+
+	opendir(SYS, $sys) or return;
+	while($dent = readdir(SYS)) {
+		next unless -d "$sys/$dent";
+		next unless -f "$sys/$dent/partition";
+		push(@parts, $part) if defined ($part = part_of($dent, $device));
+	};
+
+	return @parts ? @parts : ("");
+}
+
+sub check_dev
+{
+	my $device = shift;
+	my $nparts = shift;
+	my $info = { };
+
+	$info->{dev} = $device;
+	blkid($device, $info) or goto out;
+	my $type = $info->{TYPE};
+	goto out unless defined $type;
+	my $opts = $fsopts{$type};
+	goto out unless defined $opts;
+	$info->{opts} = $opts;
+
+out:	return $info;
+}
+
+sub try_label
+{
+	my $labels = shift;
+	foreach(@_) {
+		return unless length($_);
+	}
+	push(@$labels, join('-', @_));
+}
+
+sub blkid
+{
+	my $dev = shift;
+	my $info = shift;
+
+	open(BLKID, "-|", "/sbin/blkid -o export /dev/$dev") or return;
+	open(BLKID, "dat/blk-$dev.out") or return;				# TEST
+	while(<BLKID>) {
+		next unless /^(\S+)=(.*)/;
+		$info->{$1} = $2;
+	};
+	close(BLKID);
+
+	return 1;
+}
+
+sub in
+{
+	my $val = shift;
+	foreach(@_) { return 1 if $val eq $_; };
+	return;
+}
