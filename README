@@ -7,6 +7,30 @@ try to make symlinks under /media pointing to the /mnt mountpoints,
 with (hopefully) short descriptive names for the partitions.
 
 
+Requirements
+~~~~~~~~~~~~
+/usr/bin/perl with Fcntl module, /sbin/blkid, and usable /sys filesystem.
+
+
+Installation
+~~~~~~~~~~~~
+Download udevh-sd only. You don't need any other files.
+
+Place the  script to /sbin, and create /etc/udev/rules.d/11-mountpoints.rules
+containing
+	KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sd %k"
+	KERNEL=="sr[0-9]", RUN+="/sbin/udevh-sd %k"
+then append
+	# UDEV
+line to /etc/fstab to mark the place where automatically generated lines
+will go.
+
+To test it without creating udev rules, run
+	/sbin/udevh-sd (device) add
+	/sbin/udevh-sd (device) remove
+with "(device)" being something like "sda" or "sdb".
+
+
 Motivation
 ~~~~~~~~~~
 Automounting is bad. Keeping static mountpoints for removable devices
@@ -28,27 +52,6 @@ door-lock feature).
 Automounting shouldn't be used on any devices, except maybe for very specific
 cases of NON-removable on-again off-again devices tied closely to the system.
 End-of-rant.
-
-
-Requirements
-~~~~~~~~~~~~
-/usr/bin/perl with Fcntl module, /sbin/blkid, and usable /sys filesystem.
-
-
-Usage
-~~~~~
-Place the script to /sbin, and create /etc/udev/rules.d/11-mountpoints.rules
-containing
-	KERNEL=="sd[a-z]", RUN+="/sbin/udevh-sd %k"
-then append
-	# UDEV
-line to /etc/fstab to mark the place where automatically generated lines
-will go.
-
-To test it without creating udev rules, run
-	/sbin/udevh-sd (device) add
-	/sbin/udevh-sd (device) remove
-with "(device)" being something like "sda" or "sdb".
 
 
 Static rules in fstab
