@@ -1,9 +1,9 @@
 Description
 ~~~~~~~~~~~
-udevh-sd is an udev(7) helper script that makes mountpoints for
+udevh-sd is a udev(7) helper script that makes mountpoints for
 (removable) devices. When a new device is added, it tries to make mountpoints
-under /mnt and add relevant lines to /etc/fstab. When possible, it will also
-try to make symlinks under /media pointing to the /mnt mountpoints,
+under /mnt and add relevant lines to /etc/fstab. When possible, it also
+tries to make symlinks under /media pointing to the /mnt mountpoints,
 with (hopefully) short descriptive names for the partitions.
 
 
